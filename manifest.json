@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Receipt Transfer Helper",
+  "version": "0.1.0",
+  "description": "Reads bank transfer receipts with Qwen VL and helps insert deposits into TRKBIT.",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://otc.trkbit.co/*",
+    "https://qwenvl.kevyn.com.br/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://otc.trkbit.co/bk/clientes/depositos"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "node_modules/pdfjs-dist/build/pdf.mjs",
+        "node_modules/pdfjs-dist/build/pdf.worker.mjs"
+      ],
+      "matches": [
+        "https://otc.trkbit.co/*"
+      ]
+    }
+  ],
+  "action": {
+    "default_title": "Receipt Transfer Helper"
+  }
+}
