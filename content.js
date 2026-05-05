@@ -21,7 +21,7 @@
     idDepositor: ""
   };
   const INSERT_HIDE_AFTER_MS = 1000;
-  const QWEN_CONCURRENCY = 3;
+  const QWEN_CONCURRENCY = 5;
 
   const state = {
     items: [],
@@ -36,6 +36,10 @@
     payerNameReloadingItemId: null,
     payerNameReloadErrorItemId: null,
     payerNameReloadError: "",
+    amountReloadingItemId: null,
+    amountReloadErrorItemId: null,
+    amountReloadError: "",
+    fullReloadingItemId: null,
     runId: 0,
     batchDate: "",
     batchClientId: DEFAULT_CLIENT_ID,
@@ -117,7 +121,10 @@
         <main class="rth-overlay-main">
           <div class="rth-image-pane"><img class="rth-receipt-image" alt="Receipt preview"></div>
           <div class="rth-form-pane">
-            <div class="rth-duplicate-note" hidden>Duplicate match: same date, amount, and depositor.</div>
+            <div class="rth-form-pane-toolbar">
+              <button class="rth-icon-button rth-reload-button rth-reload-all-button" type="button" data-action="rerun-all" title="Re-read all fields with Qwen" aria-label="Re-read all fields with Qwen">↻</button>
+            </div>
+            <div class="rth-duplicate-note" hidden></div>
             <div class="rth-form-grid">
               <div class="rth-field">
                 <label for="rth-bank">Bank</label>
@@ -131,7 +138,10 @@
                 <input id="rth-payer-name" data-field="payer_name" autocomplete="off">
               </div>
               <div class="rth-field">
-                <label for="rth-amount">Amount</label>
+                <div class="rth-field-label-row">
+                  <label for="rth-amount">Amount</label>
+                  <button class="rth-icon-button rth-field-icon-button rth-reload-button rth-reload-amount-button" type="button" data-action="rerun-amount" title="Read this amount again with Qwen" aria-label="Read this amount again with Qwen">↻</button>
+                </div>
                 <input id="rth-amount" data-field="amount" inputmode="decimal" autocomplete="off">
                 <div class="rth-amount-preview"></div>
               </div>
@@ -238,7 +248,9 @@
     amountPreview: root.querySelector(".rth-amount-preview"),
     advancedToggle: root.querySelector(".rth-advanced-toggle"),
     advancedFields: root.querySelector(".rth-advanced-fields"),
-    reloadButton: root.querySelector(".rth-reload-button"),
+    reloadButton: root.querySelector('[data-action="rerun-payer-name"]'),
+    reloadAmountButton: root.querySelector('[data-action="rerun-amount"]'),
+    reloadAllButton: root.querySelector('[data-action="rerun-all"]'),
     fillButton: root.querySelector('[data-action="fill"]'),
     concludeButton: root.querySelector('[data-action="conclude"]')
   };
@@ -274,6 +286,8 @@
     if (action === "toggle-advanced") toggleAdvancedFields();
     if (action === "fill") await insertCurrentAndAdvance();
     if (action === "rerun-payer-name") await rerunCurrentPayerName();
+    if (action === "rerun-amount") await rerunCurrentAmount();
+    if (action === "rerun-all") await rerunAllFields();
   });
 
   fieldNodes.forEach((node) => {
@@ -286,6 +300,16 @@
     };
     node.addEventListener("input", applyNodeValue);
     node.addEventListener("change", applyNodeValue);
+  });
+
+  els.duplicateNote.addEventListener("click", (event) => {
+    const btn = event.target.closest(".rth-dup-link");
+    if (!btn) return;
+    const index = parseInt(btn.dataset.dupIndex, 10);
+    if (!Number.isFinite(index) || !state.items[index]) return;
+    state.currentIndex = index;
+    state.advancedOpen = false;
+    render();
   });
 
   els.batchClientSelect.addEventListener("change", () => {
@@ -677,7 +701,82 @@
   }
 
   function canRerunPayerName(item) {
-    return Boolean(item) && !isAnyReceiptBeingRead() && !state.inserting && !state.payerNameReloadingItemId && ["reviewed", "error"].includes(item.status);
+    return Boolean(item) && !isAnyReceiptBeingRead() && !state.inserting && !state.payerNameReloadingItemId && !state.amountReloadingItemId && ["reviewed", "error"].includes(item.status);
+  }
+
+  function canRerunAmount(item) {
+    return Boolean(item) && !isAnyReceiptBeingRead() && !state.inserting && !state.payerNameReloadingItemId && !state.amountReloadingItemId && ["reviewed", "error"].includes(item.status);
+  }
+
+  async function rerunCurrentAmount() {
+    const item = getCurrentItem();
+    if (!item || !canRerunAmount(item)) return;
+    const sessionRunId = state.runId;
+    state.aborted = false;
+    state.amountReloadingItemId = item.id;
+    state.amountReloadErrorItemId = null;
+    state.amountReloadError = "";
+    clearOverlayError();
+    render();
+    try {
+      const extracted = await extractReceipt(item);
+      if (state.aborted || sessionRunId !== state.runId || !state.items.includes(item)) return;
+      item.data.amount = normalizeReceiptData(extracted, item.data).amount;
+      item.rawResponse = JSON.stringify(extracted);
+      state.amountReloadErrorItemId = null;
+      state.amountReloadError = "";
+      if (state.currentIndex === state.items.indexOf(item)) {
+        const amountInput = root.querySelector('[data-field="amount"]');
+        if (amountInput) amountInput.value = item.data.amount;
+      }
+    } catch (error) {
+      if (!state.aborted && sessionRunId === state.runId) {
+        state.amountReloadErrorItemId = item.id;
+        state.amountReloadError = error instanceof Error ? error.message : String(error);
+      }
+    } finally {
+      if (sessionRunId === state.runId) {
+        state.amountReloadingItemId = null;
+        render();
+      }
+    }
+  }
+
+  function canRerunAllFields(item) {
+    return Boolean(item) && !isAnyReceiptBeingRead() && !state.inserting && !state.payerNameReloadingItemId && !state.amountReloadingItemId && ["reviewed", "error"].includes(item.status);
+  }
+
+  async function rerunAllFields() {
+    const item = getCurrentItem();
+    if (!item || !canRerunAllFields(item)) return;
+    const sessionRunId = state.runId;
+    state.aborted = false;
+    state.fullReloadingItemId = item.id;
+    state.payerNameReloadErrorItemId = null;
+    state.payerNameReloadError = "";
+    state.amountReloadErrorItemId = null;
+    state.amountReloadError = "";
+    item.status = "processing";
+    item.error = "";
+    clearOverlayError();
+    render();
+    try {
+      const extracted = await extractReceipt(item);
+      if (state.aborted || sessionRunId !== state.runId || !state.items.includes(item)) return;
+      item.data = normalizeReceiptData(extracted, item.data);
+      item.rawResponse = JSON.stringify(extracted);
+      item.status = "reviewed";
+    } catch (error) {
+      if (!state.aborted && sessionRunId === state.runId) {
+        item.status = "error";
+        item.error = error instanceof Error ? error.message : String(error);
+      }
+    } finally {
+      if (sessionRunId === state.runId) {
+        state.fullReloadingItemId = null;
+        render();
+      }
+    }
   }
 
   function isAnyReceiptBeingRead() {
@@ -685,33 +784,54 @@
   }
 
   async function extractReceipt(item) {
+    ensureExtensionContext();
     const dataUrl = await getQwenImageDataUrl(item);
+    ensureExtensionContext();
     const requestId = `rth-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     state.activeQwenRequestIds.add(requestId);
-    const result = await chrome.runtime.sendMessage({
-      type: "RTH_QWEN_EXTRACT",
-      requestId,
-      url: QWEN_CHAT_COMPLETIONS_URL,
-      body: {
-        model: "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
-        temperature: 0,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: dataUrl } }
-            ]
-          }
-        ]
-      }
-    }).finally(() => {
+    let result;
+    try {
+      result = await chrome.runtime.sendMessage({
+        type: "RTH_QWEN_EXTRACT",
+        requestId,
+        url: QWEN_CHAT_COMPLETIONS_URL,
+        body: {
+          model: "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
+          temperature: 0,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: dataUrl } }
+              ]
+            }
+          ]
+        }
+      });
+    } catch (error) {
+      throw rephraseExtensionError(error);
+    } finally {
       state.activeQwenRequestIds.delete(requestId);
-    });
+    }
     if (!result?.ok) throw new Error(result?.error || "Qwen request failed.");
     const payload = result.payload;
     const content = payload?.choices?.[0]?.message?.content ?? payload?.content ?? payload?.text ?? payload;
     return parseJsonFromModel(content);
+  }
+
+  function ensureExtensionContext() {
+    if (!chrome?.runtime?.id) {
+      throw new Error("Extension was reloaded. Please refresh this page to continue.");
+    }
+  }
+
+  function rephraseExtensionError(error) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (/Extension context invalidated|message port closed|receiving end does not exist/i.test(message)) {
+      return new Error("Extension was reloaded. Please refresh this page to continue.");
+    }
+    return error instanceof Error ? error : new Error(message);
   }
 
   function isSupportedReceiptFile(file) {
@@ -998,10 +1118,12 @@
   function getDuplicateKey(item) {
     if (!item?.data) return "";
     const date = normalizeDate(item.data.date);
+    const time = cleanText(item.data.time);
+    const payerDocument = cleanText(item.data.payer_document).replace(/\D/g, "");
     const amount = normalizeAmount(item.data.amount);
     const payerName = cleanPayerName(item.data.payer_name).toUpperCase();
     if (!date || !amount || !payerName) return "";
-    return `${date}|${amount}|${payerName}`;
+    return `${date}|${time}|${payerDocument}|${amount}|${payerName}`;
   }
 
   function getDuplicateReceiptNumbers(item) {
@@ -1157,6 +1279,10 @@
     state.payerNameReloadingItemId = null;
     state.payerNameReloadErrorItemId = null;
     state.payerNameReloadError = "";
+    state.amountReloadingItemId = null;
+    state.amountReloadErrorItemId = null;
+    state.amountReloadError = "";
+    state.fullReloadingItemId = null;
     state.batchDate = "";
     state.batchClientId = DEFAULT_CLIENT_ID;
     state.batchClientName = DEFAULT_CLIENT;
@@ -1388,6 +1514,7 @@
       row.title = `${index + 1}. ${statusText(item)}${isDuplicate ? " - duplicate match" : ""}`;
       row.innerHTML = `
         <img class="rth-thumb-image" alt="" src="${item.objectUrl}">
+        <span class="rth-thumb-loading" aria-hidden="true"></span>
         <span class="rth-thumb-badge">${index + 1}</span>
         <span class="rth-thumb-remove" role="button" aria-label="Remove receipt ${index + 1}" title="Remove receipt">x</span>
       `;
@@ -1453,7 +1580,7 @@
     els.review.classList.toggle("has-duplicate", isDuplicate);
     els.duplicateNote.hidden = !isDuplicate;
     els.duplicateNote.innerHTML = isDuplicate
-      ? `Duplicate receipt, this is equal to <strong>${escapeHtml(duplicateReceiptNumbers.join(", "))}</strong> receipt${duplicateReceiptNumbers.length === 1 ? "" : "s"}.`
+      ? `Duplicate receipt — matches ${duplicateReceiptNumbers.map((n) => `<button class="rth-dup-link" data-dup-index="${n - 1}" type="button">#${n}</button>`).join(", ")}.`
       : "";
     els.image.src = item.objectUrl;
     renderAdvancedFields();
@@ -1463,6 +1590,7 @@
     els.amountPreview.textContent = formatAmountPreview(item.data.amount);
     if (item.error) showOverlayError(item.error);
     else if (state.payerNameReloadErrorItemId === item.id && state.payerNameReloadError) showOverlayError(state.payerNameReloadError);
+    else if (state.amountReloadErrorItemId === item.id && state.amountReloadError) showOverlayError(state.amountReloadError);
     else clearOverlayError();
     renderReviewActions(item);
   }
@@ -1471,9 +1599,17 @@
     const canFill = item && ["reviewed", "error"].includes(item.status) && hasRequiredFillFields(item);
     const canConclude = item?.status === "inserted" || (!canFill && state.items.some((entry) => entry.status === "inserted"));
     const isReloadingPayerName = Boolean(item && state.payerNameReloadingItemId === item.id);
+    const isReloadingAmount = Boolean(item && state.amountReloadingItemId === item.id);
+    const isReloadingAll = Boolean(item && state.fullReloadingItemId === item.id);
     els.reloadButton.disabled = isReloadingPayerName || !canRerunPayerName(item);
     els.reloadButton.classList.toggle("is-loading", isReloadingPayerName);
     els.reloadButton.title = isReloadingPayerName ? "Reading depositor with Qwen" : "Read this depositor again with Qwen";
+    els.reloadAmountButton.disabled = isReloadingAmount || !canRerunAmount(item);
+    els.reloadAmountButton.classList.toggle("is-loading", isReloadingAmount);
+    els.reloadAmountButton.title = isReloadingAmount ? "Reading amount with Qwen" : "Read this amount again with Qwen";
+    els.reloadAllButton.disabled = isReloadingAll || !canRerunAllFields(item);
+    els.reloadAllButton.classList.toggle("is-loading", isReloadingAll);
+    els.reloadAllButton.title = isReloadingAll ? "Re-reading all fields with Qwen" : "Re-read all fields with Qwen";
     els.fillButton.hidden = !canFill;
     els.fillButton.disabled = state.inserting || !canFill;
     els.concludeButton.hidden = !canConclude;
