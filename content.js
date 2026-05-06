@@ -60,6 +60,7 @@
     "Return only valid minified JSON. Do not use markdown.",
     "Required keys:",
     "raw_text, bank, destination_bank, source_bank, beneficiary, pix_key, payer_name, payer_document, amount, date, time, transaction_id.",
+    "CRITICAL OCR ACCURACY: Pay strict attention to double consonants in business names, specifically the double S in 'ACESSORIOS'. Examine the visual character width to ensure no characters are omitted.",
     "raw_text must be the visible receipt OCR text, preserving labels and line breaks as much as possible.",
     "bank and destination_bank must be the receiver/destination institution, not the sender/source bank, app, or bank that issued the receipt. Look for labels such as Instituição Destino, Instituição do destinatário, Instituição under Dados de quem vai receber, Instituição under Dados do recebedor, Para, Favorecido, or Destinatário.",
     "source_bank is optional and may contain the origin bank/app, such as Banco Bradesco S.A., C6 Bank, Mercado Pago, Sicredi, or Unicred.",
