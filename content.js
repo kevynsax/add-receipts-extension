@@ -71,6 +71,7 @@
     "For Itau/Itaú receipts with sections de and para, payer_name is the bold company/person immediately under de. Do not skip it because the section label is short; for example, if the de section shows VIP LINE LTDA, return payer_name as VIP LINE LTDA.",
     "For Mercado Pago receipts, payer_name is the bold company/person immediately under De. Ignore OCR artifacts printed after the legal name, such as trailing .-, . -, - or isolated punctuation; for example, return BROTHERCELL MANUTENCAO DE EQUIPAMENTOS ELETRONICOS LTDA, not BROTHERCELL MANUTENCAO DE EQUIPAMENTOS ELETRONICOS LTDA .-.",
     "For C6 Bank receipts, payer_name is the person or company shown in the Conta de origem section, after the initials/avatar, for example Track Cell. Do not use the first account block above the transaction details as payer_name because that is the destination/recipient.",
+    "For Stone receipts, payer_name is the Nome under Dados de Origem. The name may wrap to a second line with a trailing number (e.g. FRANCISCO CANINDE BEZERRA FILHO on one line and 00859969126 on the next); include both lines joined with a space as the payer_name.",
     "Ignore beneficiary/destination labels and values for payer_name, including destinatário, beneficiário, recebedor, favorecido, destino, Para, Dados de quem vai receber, Cross Intermediação LTDA, Cross Intermediacao Ltda, BRASIL CASH, financeirojk@cross-otc.com, or CNPJ 52.006.135/0001-68.",
     "Preserve the payer name exactly as printed except trim extra spaces and remove trailing punctuation-only OCR noise, including capitalization.",
     "Use amount as a decimal number string with dot separator, for example 13030.00.",
@@ -136,6 +137,7 @@
                   <button class="rth-icon-button rth-field-icon-button rth-reload-button" type="button" data-action="rerun-payer-name" title="Read this depositor again with Qwen" aria-label="Read this depositor again with Qwen">↻</button>
                 </div>
                 <input id="rth-payer-name" data-field="payer_name" autocomplete="off">
+                <div class="rth-payer-name-preview"></div>
               </div>
               <div class="rth-field">
                 <div class="rth-field-label-row">
@@ -248,6 +250,7 @@
     amountPreview: root.querySelector(".rth-amount-preview"),
     advancedToggle: root.querySelector(".rth-advanced-toggle"),
     advancedFields: root.querySelector(".rth-advanced-fields"),
+    payerNamePreview: root.querySelector(".rth-payer-name-preview"),
     reloadButton: root.querySelector('[data-action="rerun-payer-name"]'),
     reloadAmountButton: root.querySelector('[data-action="rerun-amount"]'),
     reloadAllButton: root.querySelector('[data-action="rerun-all"]'),
@@ -895,7 +898,15 @@
     if (firstBrace === -1 || lastBrace === -1) {
       throw new Error("Qwen did not return JSON.");
     }
-    return JSON.parse(candidate.slice(firstBrace, lastBrace + 1));
+    const slice = candidate.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(slice);
+    } catch (err) {
+      // Qwen sometimes emits invalid JSON escapes (\ç, \ã) when OCRing accented words.
+      // Strip the stray backslash so the JSON parses.
+      const cleaned = slice.replace(/\\([^"\\\/bfnrtu])/g, "$1");
+      return JSON.parse(cleaned);
+    }
   }
 
   function fileToDataUrl(file) {
@@ -1005,12 +1016,99 @@
         extracted.documento_remetente ||
         data.payer_document
     );
+    if (digitsOnlyText(data.payer_document) === RECIPIENT_CNPJ_DIGITS) {
+      data.payer_document = "";
+    }
+    if (!data.payer_name || isKnownDestinationName(data.payer_name)) {
+      const fallback = extractPayerFromRawText(rawText);
+      if (fallback?.name) {
+        data.payer_name = cleanPayerName(fallback.name).toUpperCase();
+        if (fallback.document && !data.payer_document) {
+          data.payer_document = cleanText(fallback.document);
+        }
+        if (fallback.date && !data.date) data.date = fallback.date;
+        if (fallback.time && !data.time) data.time = fallback.time;
+      }
+    }
     data.amount = normalizeAmount(extracted.amount || extracted.valor || data.amount);
     data.date = normalizeDate(extracted.date || extracted.data || data.date);
     data.time = cleanText(extracted.time || extracted.hora || data.time);
     data.transaction_id = cleanText(extracted.transaction_id || extracted.e2e_id || extracted.id_transacao || data.transaction_id);
     data.notes = cleanText(extracted.notes || data.notes || "");
     return data;
+  }
+
+  const RECIPIENT_CNPJ_DIGITS = "52006135000168";
+  const PT_MONTHS = {
+    jan: "01", janeiro: "01", fev: "02", fevereiro: "02",
+    mar: "03", marco: "03", "março": "03",
+    abr: "04", abril: "04", mai: "05", maio: "05",
+    jun: "06", junho: "06", jul: "07", julho: "07",
+    ago: "08", agosto: "08", set: "09", setembro: "09",
+    out: "10", outubro: "10", nov: "11", novembro: "11",
+    dez: "12", dezembro: "12"
+  };
+
+  function digitsOnlyText(value) {
+    return String(value || "").replace(/\D+/g, "");
+  }
+
+  // Layout-specific fallback extractors. Only consulted when the model returned a blank
+  // or recipient-named depositor — kept here so the prompt can stay short and fast.
+  function extractPayerFromRawText(rawText) {
+    const raw = String(rawText || "");
+    if (!raw) return null;
+
+    if (/Confirma[çc][ãa]o de Opera[çc][ãa]o/i.test(raw) && /Transferir/i.test(raw)) {
+      const m = raw.match(/Empresa\s*:\s*([^\n\r]+)/i);
+      if (m) return { name: m[1] };
+    }
+
+    if (/via SISPAG/i.test(raw)) {
+      const nameMatch = raw.match(/(?:^|\n)\s*de\s*\n\s*([^\n]+?)\s*\n\s*ag[êe]ncia\b/i);
+      if (nameMatch) {
+        const cpfMatch = raw.match(/(?:^|\n)\s*de\s*\n[\s\S]{0,240}?CPF ou CNPJ\s+([0-9.\-/]+)/i);
+        const dtMatch = raw.match(/(\d{1,2})\s+([A-Za-zÀ-ÿ]+)\.?\s+(\d{4}),?\s+(\d{1,2}):(\d{2}):(\d{2})/);
+        const result = { name: nameMatch[1] };
+        if (cpfMatch) result.document = cpfMatch[1];
+        if (dtMatch) {
+          const mon = PT_MONTHS[dtMatch[2].toLowerCase()];
+          if (mon) {
+            result.date = `${dtMatch[1].padStart(2, "0")}/${mon}/${dtMatch[3]}`;
+            result.time = `${dtMatch[4].padStart(2, "0")}:${dtMatch[5]}:${dtMatch[6]}`;
+          }
+        }
+        return result;
+      }
+    }
+
+    const btg = raw.match(/(?:^|\n)\s*De\s*\n\s*Origem\s*\n\s*([^\n]+)/);
+    if (btg && !isKnownDestinationName(btg[1])) {
+      const cpfMatch = raw.match(/(?:^|\n)\s*De\s*\n\s*Origem\s*\n[\s\S]{0,200}?CPF\/CNPJ\s*\n?\s*([0-9.\-/*]+)/i);
+      return { name: btg[1], document: cpfMatch ? cpfMatch[1] : "" };
+    }
+
+    if (/Dados de origem/i.test(raw)) {
+      const m = raw.match(/Dados de origem[\s\S]{0,80}?Nome\s*\n\s*([^\n]+?)\s*\n(?:\s*(?:CPF|CNPJ)\s*\n)?\s*([0-9.\-/]{11,20})\s*\n[\s\S]{0,80}?Institui[çc][ãa]o/i);
+      if (m && !isKnownDestinationName(m[1])) {
+        const docDigits = digitsOnlyText(m[2]);
+        if (docDigits.length >= 11) {
+          return { name: `${m[1]} ${docDigits}`, document: m[2] };
+        }
+      }
+    }
+
+    const deBlock = raw.match(/(?:^|\n)\s*De\s*\n\s*([^\n]+?)\s*\n\s*(?:CPF|CNPJ)\s*[:\n]\s*([0-9.\-/*]+)/i);
+    if (deBlock && !isKnownDestinationName(deBlock[1])) {
+      return { name: deBlock[1], document: deBlock[2] };
+    }
+
+    const origemBlock = raw.match(/Origem[\s\S]{0,60}?Nome\s*\n\s*([^\n]+)/i);
+    if (origemBlock && !isKnownDestinationName(origemBlock[1])) {
+      return { name: origemBlock[1] };
+    }
+
+    return null;
   }
 
   function cleanText(value) {
@@ -1022,7 +1120,14 @@
   }
 
   function cleanPayerName(value) {
-    return cleanText(value).replace(/(?:\s+[.\-–—]+)+$/g, "").trim();
+    const text = cleanText(value);
+    const stripped = text.replace(/[\s.\-–—…]+$/u, "").trim();
+    // Preserve the Brazilian corporate suffix "S.A." — if it was originally there as
+    // the suffix and the trailing-noise strip ate its final dot, put it back.
+    if (/\bS\.A$/i.test(stripped) && /\bS\.A\.[\s.\-–—…]*$/i.test(text)) {
+      return `${stripped}.`;
+    }
+    return stripped;
   }
 
   function cleanPixKey(value) {
@@ -1376,7 +1481,7 @@
       idBank: String(data.bank_id || DEFAULT_DEPOSIT_BANK_ID),
       idUser: String(data.client_id || state.batchClientId || DEFAULT_CLIENT_ID),
       amount: parseAmountForApi(data.amount),
-      holder: cleanText(data.payer_name),
+      holder: cleanText(data.payer_name).slice(0, 45),
       date: parseBatchDateToIso(state.batchDate)
     };
 
@@ -1566,6 +1671,7 @@
       renderAdvancedFields();
       clearOverlayError();
       els.amountPreview.textContent = "";
+      els.payerNamePreview.textContent = "";
       fieldNodes.forEach((node) => {
         node.value = "";
       });
@@ -1576,7 +1682,7 @@
     const clientText = cleanText(item.data.client || state.batchClientName || DEFAULT_CLIENT);
     const isDuplicate = getDuplicateKeys().has(getDuplicateKey(item));
     const duplicateReceiptNumbers = getDuplicateReceiptNumbers(item);
-    els.subtitle.textContent = `${state.currentIndex + 1} of ${state.items.length} - ${statusText(item)}${batchDateText ? ` - API date: ${batchDateText}` : ""}${clientText ? ` - Client: ${clientText}` : ""}${isDuplicate ? " - Duplicate" : ""}`;
+    els.subtitle.textContent = `${state.currentIndex + 1} of ${state.items.length}${batchDateText ? ` - ${batchDateText}` : ""}${clientText ? ` - Client: ${clientText}` : ""}`;
     els.review.classList.toggle("has-duplicate", isDuplicate);
     els.duplicateNote.hidden = !isDuplicate;
     els.duplicateNote.innerHTML = isDuplicate
@@ -1588,6 +1694,8 @@
       node.value = item.data[node.dataset.field] || "";
     });
     els.amountPreview.textContent = formatAmountPreview(item.data.amount);
+    const payerNameFull = cleanText(item.data.payer_name || "");
+    els.payerNamePreview.textContent = payerNameFull.length > 45 ? payerNameFull.slice(0, 45) : "";
     if (item.error) showOverlayError(item.error);
     else if (state.payerNameReloadErrorItemId === item.id && state.payerNameReloadError) showOverlayError(state.payerNameReloadError);
     else if (state.amountReloadErrorItemId === item.id && state.amountReloadError) showOverlayError(state.amountReloadError);

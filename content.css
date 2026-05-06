@@ -633,7 +633,8 @@
   font: inherit;
 }
 
-.rth-amount-preview {
+.rth-amount-preview,
+.rth-payer-name-preview {
   min-height: 15px;
   color: #647084;
   font-size: 11px;
