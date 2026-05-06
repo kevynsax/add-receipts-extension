@@ -55,29 +55,28 @@
     filtersPromise: null
   };
 
-  const prompt = [
-    "Extract bank transfer receipt data from this Brazilian receipt image or PDF page.",
-    "Return only valid minified JSON. Do not use markdown.",
-    "Required keys:",
-    "raw_text, bank, destination_bank, source_bank, beneficiary, pix_key, payer_name, payer_document, amount, date, time, transaction_id.",
-    "CRITICAL OCR ACCURACY: Pay strict attention to double consonants in business names, specifically the double S in 'ACESSORIOS'. Examine the visual character width to ensure no characters are omitted.",
-    "raw_text must be the visible receipt OCR text, preserving labels and line breaks as much as possible.",
-    "bank and destination_bank must be the receiver/destination institution, not the sender/source bank, app, or bank that issued the receipt. Look for labels such as Instituição Destino, Instituição do destinatário, Instituição under Dados de quem vai receber, Instituição under Dados do recebedor, Para, Favorecido, or Destinatário.",
-    "source_bank is optional and may contain the origin bank/app, such as Banco Bradesco S.A., C6 Bank, Mercado Pago, Sicredi, or Unicred.",
-    "If the receiver is Cross Intermediação LTDA, Cross Intermediacao LTDA, BRASIL CASH IP S.A., BRASIL CASH INSTITUICAO DE PAGAMENTO S.A, or pix_key financeirojk@cross-otc.com, return bank as Creditag.",
-    "pix_key must be empty unless a visible receiver/destination Pix key is explicitly printed under labels such as Chave, Chave Pix, or Chave PIX. Do not infer pix_key from prior receipts, destination name, destination CNPJ, BRASIL CASH, Cross Intermediação, or financeirojk@cross-otc.com unless that exact value is visibly printed next to a Chave label on this receipt.",
-    "payer_name must be the depositor/sender/originator of the money, not the recipient.",
-    "Look for labels and sections such as Conta de origem, Enviado por, Solicitante, Pagador, Nome do pagador, Remetente, Ordenante, Origem, De, Depositante, Dados do pagador, Dados da conta, Empresa, Favorecido pagador, or Titular da conta origem.",
-    "For ARQ receipts, payer_name is the value under Enviado por. For Sicredi receipts, payer_name may be Solicitante or Nome do pagador. For Bradesco receipts, payer_name is usually the Empresa under Dados da conta, not the Nome under Dados de quem vai receber.",
-    "For Itau/Itaú receipts with sections de and para, payer_name is the bold company/person immediately under de. Do not skip it because the section label is short; for example, if the de section shows VIP LINE LTDA, return payer_name as VIP LINE LTDA.",
-    "For Mercado Pago receipts, payer_name is the bold company/person immediately under De. Ignore OCR artifacts printed after the legal name, such as trailing .-, . -, - or isolated punctuation; for example, return BROTHERCELL MANUTENCAO DE EQUIPAMENTOS ELETRONICOS LTDA, not BROTHERCELL MANUTENCAO DE EQUIPAMENTOS ELETRONICOS LTDA .-.",
-    "For C6 Bank receipts, payer_name is the person or company shown in the Conta de origem section, after the initials/avatar, for example Track Cell. Do not use the first account block above the transaction details as payer_name because that is the destination/recipient.",
-    "For Stone receipts, payer_name is the Nome under Dados de Origem. The name may wrap to a second line with a trailing number (e.g. FRANCISCO CANINDE BEZERRA FILHO on one line and 00859969126 on the next); include both lines joined with a space as the payer_name.",
-    "Ignore beneficiary/destination labels and values for payer_name, including destinatário, beneficiário, recebedor, favorecido, destino, Para, Dados de quem vai receber, Cross Intermediação LTDA, Cross Intermediacao Ltda, BRASIL CASH, financeirojk@cross-otc.com, or CNPJ 52.006.135/0001-68.",
-    "Preserve the payer name exactly as printed except trim extra spaces and remove trailing punctuation-only OCR noise, including capitalization.",
-    "Use amount as a decimal number string with dot separator, for example 13030.00.",
-    "Use date as DD/MM/YYYY. If a value is unknown, use an empty string."
-  ].join(" ");
+const prompt = [
+  "Extract bank transfer receipt data from this Brazilian receipt image or PDF page.",
+  "Return only valid minified JSON. Do not use markdown.",
+  "Required keys:",
+  "raw_text, bank, destination_bank, source_bank, beneficiary, pix_key, payer_name, payer_document, amount, date, time, transaction_id.",
+  "CRITICAL OCR ACCURACY: Pay strict attention to double consonants in business names, specifically the double S in 'ACESSORIOS'. Examine the visual character width to ensure no characters are omitted.",
+  "raw_text must be the visible receipt OCR text, preserving labels and line breaks as much as possible.",
+  "bank and destination_bank must be the receiver/destination institution, not the sender/source bank, app, or bank that issued the receipt. Look for labels such as Instituição Destino, Instituição do destinatário, Instituição under Dados de quem vai receber, Instituição under Dados do recebedor, Para, Favorecido, or Destinatário.",
+  "source_bank is optional and may contain the origin bank/app, such as Banco Bradesco S.A., C6 Bank, Mercado Pago, Sicredi, or Unicred.",
+  "If the receiver is Cross Intermediação LTDA, Cross Intermediacao LTDA, BRASIL CASH IP S.A., BRASIL CASH INSTITUICAO DE PAGAMENTO S.A, or pix_key financeirojk@cross-otc.com, return bank as Creditag.",
+  "pix_key must be empty unless a visible receiver/destination Pix key is explicitly printed under labels such as Chave, Chave Pix, or Chave PIX. Do not infer pix_key from prior receipts, destination name, destination CNPJ, BRASIL CASH, Cross Intermediação, or financeirojk@cross-otc.com unless that exact value is visibly printed next to a Chave label on this receipt.",
+  "payer_name must be the depositor/sender/originator of the money, not the recipient.",
+  "Look for labels and sections such as Conta de origem, Enviado por, Solicitante, Pagador, Nome do pagador, Remetente, Ordenante, Origem, De, Depositante, Dados do pagador, Dados da conta, Empresa, Favorecido pagador, or Titular da conta origem.",
+  "For ARQ receipts, payer_name is the value under Enviado por. For Sicredi receipts, payer_name may be Solicitante or Nome do pagador. For Bradesco receipts, payer_name is usually the Empresa under Dados da conta, not the Nome under Dados de quem vai receber.",
+  "For Itau/Itaú receipts with sections de and para, payer_name is the bold company/person immediately under de. Do not skip it because the section label is short; for example, if the de section shows VIP LINE LTDA, return payer_name as VIP LINE LTDA.",
+  "For Mercado Pago receipts, payer_name is the bold company/person immediately under De. Ignore OCR artifacts printed after the legal name, such as trailing .-, . -, - or isolated punctuation; for example, return BROTHERCELL MANUTENCAO DE EQUIPAMENTOS ELETRONICOS LTDA, not BROTHERCELL MANUTENCAO DE EQUIPAMENTOS ELETRONICOS LTDA .-.",
+  "For C6 Bank receipts, payer_name is the person or company shown in the Conta de origem section, after the initials/avatar, for example Track Cell. Do not use the first account block above the transaction details as payer_name because that is the destination/recipient.",
+  "For Stone receipts, payer_name is the Nome under Dados de Origem. The name may wrap to a second line with a trailing number (e.g. FRANCISCO CANINDE BEZERRA FILHO on one line and 00859969126 on the next); include both lines joined with a space as the payer_name.",
+  "Ignore beneficiary/destination labels and values for payer_name, including destinatário, beneficiário, recebedor, favorecido, destino, Para, Dados de quem vai receber, Cross Intermediação LTDA, Cross Intermediacao Ltda, BRASIL CASH, financeirojk@cross-otc.com, or CNPJ 52.006.135/0001-68.",
+  "Use amount as a decimal number string with dot separator, for example 13030.00.",
+  "Use date as DD/MM/YYYY. If a value is unknown, use an empty string."
+].join(" ");
 
   const root = document.createElement("div");
   root.id = "rth-root";
@@ -996,6 +995,15 @@
         extracted.originator ||
         data.payer_name
     ).toUpperCase();
+
+    const escapedName = data.payer_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const flexibleRegex = new RegExp(`(\\d{2}\\.\\d{3}\\.\\d{3})\\s*(${escapedName})`, 'i');
+    const match = rawText.match(flexibleRegex);
+    if (!!data.payer_name && match) {
+      data.payer_name = match[0].trim();
+    }
+    
+
     if (isKnownDestinationName(data.payer_name)) {
       data.payer_name = cleanPayerName(
         extracted.conta_origem ||
