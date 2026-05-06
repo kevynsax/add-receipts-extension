@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Receipt Transfer Helper",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Reads bank transfer receipts with Qwen VL and helps insert deposits into TRKBIT.",
   "permissions": [
     "activeTab",
